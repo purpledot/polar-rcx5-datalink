@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+    <meta name="theme-color" content="#000000">
+    <title>polar-datalink strava-sync</title>
+    <style>
+      ul {
+        list-style: none;
+        padding: 0;
+      }
+      .alert-error {
+        color: rgb(212, 34, 34)
+      }
+      .alert-success {
+        color: rgb(16, 155, 16)
+      }
+      #spinner {
+        display: none;
+        font-weight: bold;
+        font-size: 20px;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>
+      You need to enable JavaScript to run this app.
+    </noscript>
+    <div id="content">
+      {% block content %}{% endblock %}
+    </div>
+    {% block javascript %}{% endblock %}
+  </body>
+</html>

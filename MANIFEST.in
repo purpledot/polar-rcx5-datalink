@@ -1,0 +1,3 @@
+include README.md LICENSE
+recursive-include polar_rcx5_datalink/strava_sync/templates *
+recursive-include polar_rcx5_datalink/strava_sync/static *

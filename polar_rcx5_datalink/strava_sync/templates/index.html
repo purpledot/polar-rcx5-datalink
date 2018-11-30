@@ -1,0 +1,64 @@
+{% extends 'base.html' %}
+
+{% block content %}
+  <form method="POST">
+    {% with messages = get_flashed_messages(with_categories=True) %} 
+      {% if messages %}
+        {% for category, msg in messages %}
+          <p class="{{ 'alert-error' if category == 'error' else 'alert-success' }}">{{ msg }}</p>
+        {% endfor %}
+      {% endif %} 
+    {% endwith %}
+
+    <div>
+      <input id="check-all" type="checkbox" data-target="#training-sessions" checked>
+      <span>Check All</span>
+    </div>
+
+    <ul id="training-sessions">
+      {% for item in training_sessions|reverse %}
+        <li>
+          <input type="checkbox" name="training_sessions" value="{{ item.id }}" checked>
+          <span>{{ item.name }}</span>
+          <select name="sport-{{ item.id }}">
+            {% for item in sport_profiles %}
+              <option value="{{ item }}" {% if item == default_sport %} selected="selected"{% endif %}>{{ item }}</option>
+            {% endfor %}
+          </select>
+        </li>
+      {% endfor %}
+    </ul>
+
+    <button type="submit">Upload</button>
+  </form>
+  <p id="spinner">Uploading...</p>
+{% endblock %}
+
+{%block javascript %}
+  <script>
+    var checker = document.getElementById('check-all');
+    var checkboxes = document.querySelectorAll(
+      checker.getAttribute('data-target') + ' [type="checkbox"]'
+    );
+    checkboxes = Array.apply(null, checkboxes)
+
+    checker.addEventListener('change', function checkAll() {
+      checkboxes.forEach(function triggerCheck(elem) {
+        elem.checked = checker.checked;
+      })
+    })
+
+    checkboxes.forEach(function listenForChange(elem) {
+      elem.addEventListener('change', function resetChecker() {
+        if (checker.checked) {
+          checker.checked = false;
+        }
+      })
+    })
+
+    document.querySelector('form').addEventListener('submit', function showSpinner(e) {
+      e.target.style.display = 'none';
+      document.getElementById('spinner').style.display = 'block';
+    })
+  </script>
+{% endblock %}
