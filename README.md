@@ -4,6 +4,7 @@ Command-line program to export Polar RCX5 training sessions in raw or tcx format
 # Table of contents
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [Usage](#usage)
 - [Examples](#examples)
 - [Description](#description)
 
@@ -19,16 +20,21 @@ How to install libusb on Windows: https://github.com/pyusb/pyusb/issues/120#issu
 # Installation
     pip install polar-rcx5-datalink
 
+# Usage
+1. Plug in [Polar DataLink](https://support.polar.com/en/support/tips/Polar_DataLink)
+2. Select "Connect > Start" from your watch
+3. Run a [command](#description)
+
 # Examples
 ### Export training sessions in current directory
 
     rcx5 export
 
-### Export training sessions to /where/to/export/files/.
+### Export training sessions to /where/to/export/files/
 
     rcx5 export --out /where/to/export/files/ --format tcx
 
-### Filter by date.
+### Filter by date
 
     rcx5 export --from-date 2018-11-20 --to-date 2018-11-25
 
@@ -37,13 +43,11 @@ How to install libusb on Windows: https://github.com/pyusb/pyusb/issues/120#issu
     rcx5 stravasync --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
 
 # Description
-On Windows you must start synchronization before executing a command. Otherwise, the program might crash while searching for the watch.
-
-## rcx5
     Usage: rcx5 [OPTIONS] COMMAND [ARGS]...
 
     Options:
-      --help  Show this message and exit.
+      --version  Show the version and exit.
+      --help     Show this message and exit.
 
     Commands:
       export      Exports training sessions.
