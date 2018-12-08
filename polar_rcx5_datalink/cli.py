@@ -159,6 +159,7 @@ def common_options(func):
     type=click.Choice(['raw', 'bin', 'tcx']),
     default=DEFAULT_EXPORT_FORMAT,
     help='Export file format.',
+    show_default=True,
 )
 @common_options
 @load_sessions
@@ -188,12 +189,12 @@ def export(sessions, out, file_format):
     '--client-id',
     type=int,
     required=True,
-    help=('Strava application’s ID, obtained during registration'),
+    help=('Application’s ID, obtained during registration'),
 )
 @click.option(
     '--client-secret',
     required=True,
-    help='Strava application’s secret, obtained during registration.',
+    help='Application’s secret, obtained during registration.',
 )
 @common_options
 @load_sessions

@@ -61,7 +61,7 @@ How to install libusb on Windows: https://github.com/pyusb/pyusb/issues/120#issu
     Options:
       -o, --out PATH                  Where to save the output. Current working 
                                       directory by default.
-      -f, --format [raw|bin|tcx]      Export file format.
+      -f, --format [raw|bin|tcx]      Export file format. [default: tcx]
       -s, --sessions-dir PATH         Directory of raw training sessions.
       --from-date [%Y-%m-%d|%Y-%m-%dT%H:%M:%S|%Y-%m-%d %H:%M:%S]
                                       Filter sessions that have started at this
@@ -93,10 +93,11 @@ How to install libusb on Windows: https://github.com/pyusb/pyusb/issues/120#issu
         rcx5 stravasync
 
     Options:
+      -h, --host TEXT
       -p, --port INTEGER
-      --client-id INTEGER             Strava application’s ID, obtained during
+      --client-id INTEGER             Application’s ID, obtained during
                                       registration  [required]
-      --client-secret TEXT            Strava application’s secret, obtained during
+      --client-secret TEXT            Application’s secret, obtained during
                                       registration.  [required]
       -s, --sessions-dir PATH         Directory of raw training sessions.
       --from-date [%Y-%m-%d|%Y-%m-%dT%H:%M:%S|%Y-%m-%d %H:%M:%S]
