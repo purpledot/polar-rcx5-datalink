@@ -14,7 +14,7 @@ from .converter import FORMAT_CONVERTER_MAP
 from .exceptions import PolarDataLinkError, ParsingSamplesError
 from .__version__ import __version__
 
-ENVAR_PREFIX = 'RCX5'
+ENVVAR_PREFIX = 'RCX5'
 DEFAULT_STRAVASYNC_HOST = '127.0.0.1'
 DEFAULT_STRAVASYNC_PORT = 8000
 DEFAULT_EXPORT_FORMAT = 'tcx'
@@ -115,7 +115,7 @@ def cli():
     \b
     Examples:
       rcx5 export --out /path/for/exported/files/
-      rcx5 strava-sync --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
+      rcx5 stravasync --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
     """
     pass
 
@@ -208,7 +208,7 @@ def stravasync(sessions, host, port, client_id, client_secret):
 
     \b
     Examples:
-      rcx5 strava-syncs --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
+      rcx5 stravasync --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
       \b
       # You can use environment variables to pass --client-id and --client-secret.
       \b
@@ -222,4 +222,4 @@ def stravasync(sessions, host, port, client_id, client_secret):
 
 
 def main():
-    cli(auto_envvar_prefix=ENVAR_PREFIX)
+    cli(auto_envvar_prefix=ENVVAR_PREFIX)

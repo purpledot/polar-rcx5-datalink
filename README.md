@@ -84,7 +84,7 @@ How to install libusb on Windows: https://github.com/pyusb/pyusb/issues/120#issu
       Provide those in options --client-id and --client-secret respectively.
 
       Examples:
-        rcx5 strava-syncs --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
+        rcx5 stravasync --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
 
         # You can use environment variables to pass --client-id and --client-secret.
 
