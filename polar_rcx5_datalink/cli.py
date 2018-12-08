@@ -70,7 +70,7 @@ def raw_sessions_from_watch():
         secho('No sessions found', fg='green')
         sys.exit()
 
-    echo(f'Loading training sessions...')
+    echo('Loading training sessions...')
     raw_sessions = dl.sessions(sessions_count)
 
     dl.disconnect()
