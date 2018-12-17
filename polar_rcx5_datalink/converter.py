@@ -3,7 +3,6 @@ import datetime
 import json
 import xml.etree.ElementTree as ET
 
-from .utils import get_bin
 from .exceptions import ConverterError
 
 
@@ -22,9 +21,8 @@ class Converter(object):
 class BinaryConverter(Converter):
     def write(self, out):
         with open(self._get_filepath(out), 'w') as f:
-            for i, packet in enumerate(self.training_session.raw):
-                packet_as_bin = ''.join([get_bin(x, 8) for x in packet[:-59]])
-                f.write(f'{packet_as_bin}\n\n\n')
+            packet_as_bin = self.training_session.tobin()
+            f.write(f'{packet_as_bin}')
 
 
 class RawConverter(Converter):

@@ -23,10 +23,21 @@ MAP_SAMPLE_RATE_TO_SEC = (
     60,
 )
 
+# There is 4 types of HR values defined by a prefix:
+# 011 -- 8-bit unsigned integer (positive full value)
+# 10  -- 4-bit unsigned integer (positive delta)
+# 11  -- 4-bit signed integer (negative delta)
+# 00  -- 11-bit unsigned integer (positive full value)
+HR_TYPE_FULL_WITH_PREFIX = '01'
+HR_TYPE_FULL_PREFIXLESS = '00'
+HR_TYPE_POS_DELTA = '10'
+HR_TYPE_NEG_DELTA = '11'
+
 
 class TrainingSession(object):
     COORD_COEFF = 1666.6666666666667
     _PACKET_HEADER_LENGTH = 7
+    _LAP_DATA_BITS_LENGTH = 416
     _MAP_FIELD_TO_BYTE_INDEX = {
         'user_hr_max': 219,
         'user_hr_rest': 54,
@@ -81,6 +92,23 @@ class TrainingSession(object):
         self._prev_values = dict()
         self._prefixless_zero_sat = False
 
+    def tobin(self):
+        result = []
+
+        for index, packet in enumerate(self.raw):
+            # Keep header of the first packet just for convenience of debugging
+            start = 0 if index == 0 else self._PACKET_HEADER_LENGTH
+            # Cut off useless trailing zero bytes
+            is_last = index == len(self.raw) - 1
+            if is_last:
+                packet = utils.pop_zeroes(packet[start:])
+            else:
+                packet = packet[start:-59]
+
+            result.append(''.join([utils.get_bin(byte, 8) for byte in packet]))
+
+        return ''.join(result)
+
     def parse_samples(self):
         """Parses periodic data recorded with fixed interval"""
         # NOTE: This code is prone to critical errors since changing
@@ -88,7 +116,7 @@ class TrainingSession(object):
         #
         # TODO: Make it less error prone.
         try:
-            session_bits = self._session_as_bits(self.raw)
+            session_bits = self.tobin()
             # periodic data starts at the 349th byte (has gps)
             # or at 351th (without gps)
             start = self._samples_start_index()
@@ -113,9 +141,7 @@ class TrainingSession(object):
 
                 # We won't use this value
                 self._parse_satellites(data)
-
-                # Next 10 bits are undefined
-                self._cursor += 10
+                self._parse_lap(data)
 
                 prev = self._last_sample()
                 distance = self._calculate_distance((prev.lat, prev.lon), (lat, lon))
@@ -167,42 +193,24 @@ class TrainingSession(object):
             + self.info['duration_seconds']
         )
 
-    def _session_as_bits(self, session):
-        result = []
-
-        for index, packet in enumerate(session):
-            # Keep header of the first packet just for convenience of debugging
-            start = 0 if index == 0 else self._PACKET_HEADER_LENGTH
-            # Cut off useless trailing zero bytes
-            is_last = index == len(session) - 1
-            if is_last:
-                packet = utils.pop_zeroes(packet[start:])
-            else:
-                packet = packet[start:-59]
-
-            result.append(''.join([utils.get_bin(byte, 8) for byte in packet]))
-
-        return ''.join(result)
-
     def _process_hr_bits(self, input_val):
-        """
-        There is three types of values defined by a prefix:
-        011 -- 8-bit unsigned integer (positive full value)
-        10  -- 4-bit unsigned integer (positive delta)
-        11  -- 4-bit signed integer (negative delta)
-        NOTE: Don't know why 011 is not used instead of this one
-        00  -- 9-bit unsigned integer (positive full value)
-        """
         val_type = input_val[0:2]
-        type_offset = 3 if val_type == '01' else 2
-        end = 11 if val_type in ('01', '00') else 6
-
+        type_offset_map = {
+            HR_TYPE_FULL_WITH_PREFIX: 3,
+            HR_TYPE_FULL_PREFIXLESS: 0,
+            HR_TYPE_POS_DELTA: 2,
+            HR_TYPE_NEG_DELTA: 2,
+        }
+        type_offset = type_offset_map[val_type]
+        end = (
+            11 if val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS) else 6
+        )
         val = input_val[type_offset:end]
 
         if len(val) < 4:
             val = '{:<04s}'.format(val)
 
-        if val_type == '11':
+        if val_type == HR_TYPE_NEG_DELTA:
             val = utils.twos_complement_to_int(val)
         else:
             val = int(val, 2)
@@ -351,11 +359,11 @@ class TrainingSession(object):
         # if self.is_hr_frozen:
         field = 'hr'
         if self._is_frozen(field):
-            if val_type == '01':
+            if val_type == HR_TYPE_FULL_WITH_PREFIX:
                 self._unfreeze(field)
             else:
                 hr = 0
-                val_type = '10'
+                val_type = HR_TYPE_POS_DELTA
                 offset = 1
 
         self._freeze_status(field, hr)
@@ -364,8 +372,9 @@ class TrainingSession(object):
         self._cursor += offset
 
         prev_hr = self._last_sample(field)
+        is_full = val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS)
 
-        return hr if val_type in ('01', '00') else prev_hr + hr
+        return hr if is_full else prev_hr + hr
 
     def _parse_speed(self, data):
         """
@@ -547,8 +556,14 @@ class TrainingSession(object):
         NOTE:
         -- does't trigger unfreeze process
         """
+        # There is MUST be 01 after prefixless full zero value.
+        if self._next(data, 9) == '0' * 9:
+            self._cursor += 0
+            return 0
+
         offset = 4
         sat = self._next(data, 4)
+        prefixless_value = int(self._next(data, 7), 2)
         field = 'sat'
 
         if self._prefixless_zero_sat and sat[:3] == '001':
@@ -558,12 +573,14 @@ class TrainingSession(object):
             # There might be prefixless full value
             #
             # NOTE: condition below might break since we assume
-            # that prefixless full value can't start with 01
-            offset = 0 if sat[:2] == '01' else 7
+            # that prefixless full value can't represent more
+            # than 31 satellites (we need this assumption to parse
+            # bits that follow satellites bits).
+            offset = 0 if prefixless_value > 31 else 7
             if sat[:3] == '001':
                 self._unfreeze(field)
 
-        self._prefixless_zero_sat = self._next(data, 7) == '0000000'
+        self._prefixless_zero_sat = prefixless_value == 0
         if self._prefixless_zero_sat:
             offset = 7
 
@@ -575,6 +592,26 @@ class TrainingSession(object):
         self._cursor += offset
 
         return sat
+
+    def _parse_lap(self, data):
+        """Parses lap data.
+
+        NOTE: Currently it only shifts cursor.
+        """
+        # There is undefined 10 bits that start with 01.
+        undefined_bits_length = 10
+        u_bits_first = self._next(data, 2) == '01'
+
+        # Since undefined bits are always exist, lap data (if exists) might
+        # follow or be followed by those bits.
+        if u_bits_first:
+            self._cursor += undefined_bits_length
+
+            # Lap data exists if next two bits are not valid heart rate value.
+            if self._next(data, 2) not in ('01', '10', '11'):
+                self._cursor += self._LAP_DATA_BITS_LENGTH
+        else:
+            self._cursor += self._LAP_DATA_BITS_LENGTH + undefined_bits_length
 
     def _samples_start_index(self):
         """Returns the index of periodic data start"""
