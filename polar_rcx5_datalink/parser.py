@@ -55,7 +55,6 @@ class TrainingSession(object):
         'hr_max': 205,
         'hr_min': 203,
         'hr_avg': 201,
-        'calories': 199,
         'has_hr': (165, bool),
         'has_gps': (166, bool),
         'sample_rate': (167, lambda x: MAP_SAMPLE_RATE_TO_SEC[x]),

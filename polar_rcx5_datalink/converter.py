@@ -72,7 +72,6 @@ class TCXConverter(Converter):
             ('TotalTimeSeconds', sess.duration),
             ('DistanceMeters', '{0:.2f}'.format(sess.distance)),
             ('MaximumSpeed', '{0:.1f}'.format(sess.max_speed)),
-            ('Calories', sess.info['calories']),
         )
         for tag, value in stats:
             ET.SubElement(lap, tag).text = str(value)
