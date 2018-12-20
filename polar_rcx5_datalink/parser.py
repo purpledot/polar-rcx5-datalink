@@ -1,3 +1,4 @@
+import re
 import datetime
 from collections import namedtuple
 
@@ -35,7 +36,7 @@ HR_TYPE_NEG_DELTA = '11'
 
 
 class TrainingSession(object):
-    COORD_COEFF = 1666.6666666666667
+    COORD_COEFF = 1666.666_666_666_666_7
     _PACKET_HEADER_LENGTH = 7
     _LAP_DATA_BITS_LENGTH = 416
     _MAP_FIELD_TO_BYTE_INDEX = {
@@ -140,6 +141,8 @@ class TrainingSession(object):
 
                 # We won't use this value
                 self._parse_satellites(data)
+                # Skip undefined 10 bits
+                self._cursor += 10
                 self._parse_lap(data)
 
                 prev = self._last_sample()
@@ -597,20 +600,19 @@ class TrainingSession(object):
 
         NOTE: Currently it only shifts cursor.
         """
-        # There is undefined 10 bits that start with 01.
-        undefined_bits_length = 10
-        u_bits_first = self._next(data, 2) == '01'
+        prev = self._last_sample()
+        lon = utils.get_bin(int(prev.lon), 8)
+        lat = utils.get_bin(int(prev.lat), 8)
 
-        # Since undefined bits are always exist, lap data (if exists) might
-        # follow or be followed by those bits.
-        if u_bits_first:
-            self._cursor += undefined_bits_length
-
-            # Lap data exists if next two bits are not valid heart rate value.
-            if self._next(data, 2) not in ('01', '10', '11'):
-                self._cursor += self._LAP_DATA_BITS_LENGTH
-        else:
-            self._cursor += self._LAP_DATA_BITS_LENGTH + undefined_bits_length
+        # Since the pattern is unknown and we don't have better ideas
+        # it's going to be another assumption.
+        # If there is lap data, it always contains longitude and latitude.
+        # But the amount of bits before is inconsistent. For now we assume
+        # that there is 250 to 270 bits.
+        # FIXME: Error prone code.
+        pat = f'.{{250,270}}{lon}.{{24}}{lat}'
+        if re.match(pat, self._next(data, self._LAP_DATA_BITS_LENGTH)) is not None:
+            self._cursor += self._LAP_DATA_BITS_LENGTH
 
     def _samples_start_index(self):
         """Returns the index of periodic data start"""
