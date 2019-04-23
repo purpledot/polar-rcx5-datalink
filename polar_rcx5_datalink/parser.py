@@ -137,13 +137,25 @@ class TrainingSession(object):
 
                 # 24 bits for lon and lat delta
                 # Example: 000001101001 (lon) 111111011010 (lat)
+                print(hr, self._next(data, 24))
                 lat, lon = self._parse_coords(data)
 
-                # We won't use this value
-                self._parse_satellites(data)
+                # TODO: This code has to be tested on more samples
+                # to confirm the pattern.
+                if self._has_lap_data(data):
+                    sat_after_lap = self._next(data, 9) == '0' * 9
+                    if not sat_after_lap:
+                        self._parse_satellites(data)
+
+                    self._cursor += self._LAP_DATA_BITS_LENGTH
+
+                    if sat_after_lap:
+                        self._parse_satellites(data)
+                else:
+                    self._parse_satellites(data)
+
                 # Skip undefined 10 bits
                 self._cursor += 10
-                self._parse_lap(data)
 
                 prev = self._last_sample()
                 distance = self._calculate_distance((prev.lat, prev.lon), (lat, lon))
@@ -558,11 +570,6 @@ class TrainingSession(object):
         NOTE:
         -- does't trigger unfreeze process
         """
-        # There is MUST be 01 after prefixless full zero value.
-        if self._next(data, 9) == '0' * 9:
-            self._cursor += 0
-            return 0
-
         offset = 4
         sat = self._next(data, 4)
         prefixless_value = int(self._next(data, 7), 2)
@@ -595,11 +602,7 @@ class TrainingSession(object):
 
         return sat
 
-    def _parse_lap(self, data):
-        """Parses lap data.
-
-        NOTE: Currently it only shifts cursor.
-        """
+    def _has_lap_data(self, data):
         prev = self._last_sample()
         lon = utils.get_bin(int(prev.lon), 8)
         lat = utils.get_bin(int(prev.lat), 8)
@@ -608,11 +611,10 @@ class TrainingSession(object):
         # it's going to be another assumption.
         # If there is lap data, it always contains longitude and latitude.
         # But the amount of bits before is inconsistent. For now we assume
-        # that there is 250 to 270 bits.
+        # that there is 250 to 290 bits.
         # FIXME: Error prone code.
-        pat = f'.{{250,270}}{lon}.{{24}}{lat}'
-        if re.match(pat, self._next(data, self._LAP_DATA_BITS_LENGTH)) is not None:
-            self._cursor += self._LAP_DATA_BITS_LENGTH
+        pat = f'.{{250,290}}{lon}.{{24}}{lat}'
+        return re.match(pat, self._next(data, self._LAP_DATA_BITS_LENGTH)) is not None
 
     def _samples_start_index(self):
         """Returns the index of periodic data start"""
