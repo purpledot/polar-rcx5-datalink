@@ -102,6 +102,8 @@ class TrainingSession(object):
         self._zero_delta_counter = {field: 0 for field in list(SampleFields)}
         self._prefixless_zero_sat = False
 
+        self._samples_bits = self._get_samples_bits()
+
     def tobin(self):
         result = []
 
@@ -120,20 +122,17 @@ class TrainingSession(object):
         return ''.join(result)
 
     # TODO: Make it less error prone.
+    # This code is prone to critical errors since changing
+    # settings in the watch (e.g. enabling automatic lap) might affect it.
     def parse_samples(self):
         """Parses periodic data recorded with fixed interval"""
-        # NOTE: This code is prone to critical errors since changing
-        # settings in the watch (e.g. enabling automatic lap) might affect it.
         try:
-            session_bits = self.tobin()
-            # periodic data starts at the 349th byte (has gps)
-            # or at 351th (without gps)
-            start = self._samples_start_index()
-            data = session_bits[start:]
-            self.samples = [self._parse_first_sample(data)]
+            self.samples = [self._parse_first_sample()]
 
-            while self._cursor < len(data) and len(self._next(data, 7)) > 5:
-                hr = self._parse_hr(data) if self.has_hr else None
+            while (
+                self._cursor < len(self._samples_bits) and len(self._next_bits(7)) > 5
+            ):
+                hr = self._parse_hr() if self.has_hr else None
 
                 if not self.has_gps:
                     self.samples.append(Sample(hr))
@@ -141,26 +140,26 @@ class TrainingSession(object):
 
                 # We won't use these values but instead calculate
                 # them using lat and lon
-                self._parse_speed(data)
-                self._parse_distance(data)
+                self._parse_speed()
+                self._parse_distance()
 
                 # 24 bits for lon and lat delta
                 # Example: 000001101001 (lon) 111111011010 (lat)
-                lon, lat = self._parse_coords(data)
+                lon, lat = self._parse_coords()
 
                 # TODO: This code has to be tested on more samples
                 # to confirm the pattern.
-                if self._has_lap_data(data):
-                    sat_after_lap = self._next(data, 9) == '0' * 9
+                if self._has_lap_data():
+                    sat_after_lap = self._next_bits(9) == '0' * 9
                     if not sat_after_lap:
-                        self._parse_satellites(data)
+                        self._parse_satellites()
 
                     self._cursor += self._LAP_DATA_BITS_LENGTH
 
                     if sat_after_lap:
-                        self._parse_satellites(data)
+                        self._parse_satellites()
                 else:
-                    self._parse_satellites(data)
+                    self._parse_satellites()
 
                 # Skip undefined 10 bits
                 self._cursor += 10
@@ -174,14 +173,12 @@ class TrainingSession(object):
                 if speed > self.max_speed:
                     self.max_speed = speed
 
-                node = Sample(hr, lon, lat, distance, speed)
-
-                self.samples.append(node)
+                self.samples.append(Sample(hr, lon, lat, distance, speed))
         except Exception as e:
             raise ParsingSamplesError(e)
 
-    def _next(self, data, length):
-        return data[self._cursor : self._cursor + length]
+    def _next_bits(self, length):
+        return self._samples_bits[self._cursor : self._cursor + length]
 
     def _parse_info(self):
         first_packet = self.raw[0]
@@ -308,13 +305,13 @@ class TrainingSession(object):
 
         return getattr(sample, field.value)
 
-    def _parse_first_sample(self, data):
+    def _parse_first_sample(self):
         if self.has_gps:
             # The purpose of the first 22 bits is unknown
             self._cursor = 22
 
         if self.has_hr:
-            hr, _, offset = self._process_hr_bits(data[self._cursor :])
+            hr, _, offset = self._process_hr_bits(self._samples_bits[self._cursor :])
             self._cursor += offset
 
         if not self.has_gps:
@@ -336,7 +333,7 @@ class TrainingSession(object):
 
         # Next 56 bits contain first longitude and latitude
         coords_end = self._cursor + 56
-        coords = self._parse_first_coords(data[self._cursor : coords_end])
+        coords = self._parse_first_coords(self._samples_bits[self._cursor : coords_end])
 
         # Set start time based on timezone of coordinates
         timezone = utils.timezone_by_coords(coords.lat, coords.lon)
@@ -355,10 +352,10 @@ class TrainingSession(object):
 
         return Sample(hr if self.has_hr else None, *coords, distance=0.0, speed=0.0)
 
-    def _parse_hr(self, data):
+    def _parse_hr(self):
         field = SampleFields.HR
         # Maximum 11 bits for hr data
-        bits = self._next(data, 11)
+        bits = self._next_bits(11)
         hr, val_type, offset = self._process_hr_bits(bits)
 
         # HR is going to "freeze" with two zero deltas in a row.
@@ -381,7 +378,7 @@ class TrainingSession(object):
 
         return hr if is_full else self._prev_sample(field) + hr
 
-    def _parse_speed(self, data):
+    def _parse_speed(self):
         """
         Parse 7 (delta) or 16 (full value) bits that contain speed.
 
@@ -408,16 +405,16 @@ class TrainingSession(object):
         # We are not going to use speed so we don't care about its value.
         field = SampleFields.SPEED
         offset = 7
-        speed = int(self._next(data, 7), 2)
+        speed = int(self._next_bits(7), 2)
 
         if self._is_frozen(field):
             offset = 0
             speed = 0
 
-        is_full = self._next(data, 7) == '1000000'
+        is_full = self._next_bits(7) == '1000000'
         if is_full:
             offset = 16
-            speed = int(data[self._cursor + 7 : self._cursor + 16], 2)
+            speed = int(self._samples_bits[self._cursor + 7 : self._cursor + 16], 2)
             self._unfreeze(field)
         else:
             self._handle_delta(field, speed)
@@ -426,7 +423,7 @@ class TrainingSession(object):
 
         return speed
 
-    def _parse_distance(self, data):
+    def _parse_distance(self):
         """
         Parses 7 or 29 bits that contain distance covered.
 
@@ -450,16 +447,16 @@ class TrainingSession(object):
         """
         field = SampleFields.DISTANCE
         offset = 7
-        dist = int(self._next(data, 7), 2)
+        dist = int(self._next_bits(7), 2)
 
         if self._is_frozen(field):
             offset = 0
             dist = 0
 
-        is_full = self._next(data, 8) == '10000000'
+        is_full = self._next_bits(8) == '10000000'
         if is_full:
             offset = 29
-            dist = int(data[self._cursor + 8 : self._cursor + 29], 2)
+            dist = int(self._samples_bits[self._cursor + 8 : self._cursor + 29], 2)
             self._unfreeze(field)
         else:
             self._handle_delta(field, dist)
@@ -468,15 +465,15 @@ class TrainingSession(object):
 
         return dist
 
-    def _parse_coords(self, data):
-        lon = self._parse_coord(data, SampleFields.LON)
-        lat = self._parse_coord(data, SampleFields.LAT)
+    def _parse_coords(self):
+        lon = self._parse_coord(SampleFields.LON)
+        lat = self._parse_coord(SampleFields.LAT)
 
         return (lon, lat)
 
-    def _parse_coord(self, data, coord_name):
+    def _parse_coord(self, coord_name):
         offset = 12
-        raw_value = self._next(data, offset)
+        raw_value = self._next_bits(offset)
 
         # 12 bits of delta
         prev = self._prev_sample(coord_name)
@@ -491,7 +488,8 @@ class TrainingSession(object):
             frac_end = int_end + 20
 
             full_value = self._format_coord(
-                data[self._cursor : int_end], data[int_end:frac_end]
+                self._samples_bitsself._samples_bits[self._cursor : int_end],
+                self._samples_bits[int_end:frac_end],
             )
 
             is_full = int(full_value) == int(prev)
@@ -509,7 +507,7 @@ class TrainingSession(object):
 
     # TODO: Seems like there is a lot of edge cases that may lead to errors.
     # Figure them out and handle. For now it covers most common patterns.
-    def _parse_satellites(self, data):
+    def _parse_satellites(self):
         """
         Parses 4 (delta) or 7 (full value) bits contain number
         of satellites used to calculate the GPX fix.
@@ -562,8 +560,8 @@ class TrainingSession(object):
         """
         field = SampleFields.SATELLITES
         offset = 4
-        sat = self._next(data, 4)
-        prefixless_value = int(self._next(data, 7), 2)
+        sat = self._next_bits(4)
+        prefixless_value = int(self._next_bits(7), 2)
 
         # After a sample with prefixless zero value there
         # migh be full value with prefix.
@@ -597,7 +595,7 @@ class TrainingSession(object):
         return sat
 
     # TODO: Make more reliable algorithm for lap data detection.
-    def _has_lap_data(self, data):
+    def _has_lap_data(self):
         prev = self._prev_sample()
         lon = utils.get_bin(int(prev.lon), 8)
         lat = utils.get_bin(int(prev.lat), 8)
@@ -608,9 +606,11 @@ class TrainingSession(object):
         # But the amount of bits before is inconsistent. We assume
         # there is from 250 to 290 bits.
         pat = f'.{{250,290}}{lon}.{{24}}{lat}'
-        return re.match(pat, self._next(data, self._LAP_DATA_BITS_LENGTH)) is not None
+        return re.match(pat, self._next_bits(self._LAP_DATA_BITS_LENGTH)) is not None
 
-    def _samples_start_index(self):
-        """Returns the index of periodic data start"""
+    def _get_samples_bits(self):
+        """Returns periodic data as bits"""
+        # periodic data starts at the 349th byte (has gps)
+        # or at 351th (without gps)
         start = 349 if self.has_gps else 351
-        return start * 8
+        return self.tobin()[start * 8 :]
