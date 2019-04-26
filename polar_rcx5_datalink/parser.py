@@ -1,6 +1,7 @@
 import re
 import datetime
 from collections import namedtuple
+from enum import Enum
 
 import geopy.distance
 
@@ -8,7 +9,17 @@ import polar_rcx5_datalink.utils as utils
 from .utils import bcd_to_int
 from .exceptions import ParsingSamplesError
 
-FIELDS = ['hr', 'lon', 'lat', 'distance', 'speed']
+
+class SampleFields(Enum):
+    HR = 'hr'
+    LON = 'lon'
+    LAT = 'lat'
+    DISTANCE = 'distance'
+    SPEED = 'speed'
+    SATELLITES = 'sat'
+
+
+FIELDS = [field.value for field in SampleFields if field != SampleFields.SATELLITES]
 Sample = namedtuple('Sample', FIELDS, defaults=(None,) * len(FIELDS))
 
 MAP_SAMPLE_RATE_TO_SEC = (
@@ -88,8 +99,7 @@ class TrainingSession(object):
         self._cursor = 0
         # We need these variables to manipulate with cursor
         # while parsing values that freeze
-        self._frozen_fields = set()
-        self._prev_values = dict()
+        self._zero_delta_counter = {field: 0 for field in list(SampleFields)}
         self._prefixless_zero_sat = False
 
     def tobin(self):
@@ -109,12 +119,11 @@ class TrainingSession(object):
 
         return ''.join(result)
 
+    # TODO: Make it less error prone.
     def parse_samples(self):
         """Parses periodic data recorded with fixed interval"""
         # NOTE: This code is prone to critical errors since changing
         # settings in the watch (e.g. enabling automatic lap) might affect it.
-        #
-        # TODO: Make it less error prone.
         try:
             session_bits = self.tobin()
             # periodic data starts at the 349th byte (has gps)
@@ -137,8 +146,7 @@ class TrainingSession(object):
 
                 # 24 bits for lon and lat delta
                 # Example: 000001101001 (lon) 111111011010 (lat)
-                print(hr, self._next(data, 24))
-                lat, lon = self._parse_coords(data)
+                lon, lat = self._parse_coords(data)
 
                 # TODO: This code has to be tested on more samples
                 # to confirm the pattern.
@@ -157,7 +165,7 @@ class TrainingSession(object):
                 # Skip undefined 10 bits
                 self._cursor += 10
 
-                prev = self._last_sample()
+                prev = self._prev_sample()
                 distance = self._calculate_distance((prev.lat, prev.lon), (lat, lon))
                 self.distance += distance
 
@@ -209,6 +217,10 @@ class TrainingSession(object):
 
     def _process_hr_bits(self, input_val):
         val_type = input_val[0:2]
+
+        if self._is_frozen(SampleFields.HR) and val_type != HR_TYPE_FULL_WITH_PREFIX:
+            return 0, None, 1
+
         type_offset_map = {
             HR_TYPE_FULL_WITH_PREFIX: 3,
             HR_TYPE_FULL_PREFIXLESS: 0,
@@ -231,32 +243,19 @@ class TrainingSession(object):
 
         return val, val_type, end
 
-    def _freeze_status(self, field, value):
-        if self._should_freeze(field, value):
-            self._freeze(field)
-
-        # self._prev_values[field] = value
-
-    def _should_freeze(self, field, value):
-        if isinstance(value, str):
-            value = int(value, 2)
-
-        return (
-            field not in self._frozen_fields
-            and field in self._prev_values
-            and value == 0
-            and value == self._prev_values[field]
-        )
-
     def _is_frozen(self, field):
-        return field in self._frozen_fields
-
-    def _freeze(self, field):
-        self._frozen_fields.add(field)
+        """Field is frozen if there was two zero deltas in a row"""
+        return self._zero_delta_counter[field] >= 2
 
     def _unfreeze(self, field):
-        with utils.ignored(KeyError):
-            self._frozen_fields.remove(field)
+        self._zero_delta_counter[field] = 0
+
+    def _handle_delta(self, field, delta):
+        """Counts zero deltas if they occur one by one"""
+        if delta == 0:
+            self._zero_delta_counter[field] += 1
+        else:
+            self._zero_delta_counter[field] = 0
 
     def _format_coord_frac(self, val):
         if isinstance(val, str):
@@ -302,12 +301,12 @@ class TrainingSession(object):
             self._format_coord(lon_int, lon_frac), self._format_coord(lat_int, lat_frac)
         )
 
-    def _last_sample(self, field=None):
+    def _prev_sample(self, field=None):
         sample = self.samples[-1]
         if field is None:
             return sample
 
-        return getattr(sample, field)
+        return getattr(sample, field.value)
 
     def _parse_first_sample(self, data):
         if self.has_gps:
@@ -357,6 +356,7 @@ class TrainingSession(object):
         return Sample(hr if self.has_hr else None, *coords, distance=0.0, speed=0.0)
 
     def _parse_hr(self, data):
+        field = SampleFields.HR
         # Maximum 11 bits for hr data
         bits = self._next(data, 11)
         hr, val_type, offset = self._process_hr_bits(bits)
@@ -369,26 +369,17 @@ class TrainingSession(object):
         # 10 0000       +0
         # 1             +0 frozen
         # 011 10010100  148
-        #
-        # if self.is_hr_frozen:
-        field = 'hr'
-        if self._is_frozen(field):
-            if val_type == HR_TYPE_FULL_WITH_PREFIX:
-                self._unfreeze(field)
-            else:
-                hr = 0
-                val_type = HR_TYPE_POS_DELTA
-                offset = 1
 
-        self._freeze_status(field, hr)
-        self._prev_values[field] = hr
+        if self._is_frozen(field) and val_type == HR_TYPE_FULL_WITH_PREFIX:
+            self._unfreeze(field)
+
+        is_full = val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS)
+        if not is_full:
+            self._handle_delta(field, hr)
 
         self._cursor += offset
 
-        prev_hr = self._last_sample(field)
-        is_full = val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS)
-
-        return hr if is_full else prev_hr + hr
+        return hr if is_full else self._prev_sample(field) + hr
 
     def _parse_speed(self, data):
         """
@@ -414,10 +405,10 @@ class TrainingSession(object):
         NOTE: full value might appear even without speed being frozen.
         """
 
-        # We are not going to parse speed for now.
+        # We are not going to use speed so we don't care about its value.
+        field = SampleFields.SPEED
         offset = 7
         speed = int(self._next(data, 7), 2)
-        field = 'speed'
 
         if self._is_frozen(field):
             offset = 0
@@ -428,11 +419,8 @@ class TrainingSession(object):
             offset = 16
             speed = int(data[self._cursor + 7 : self._cursor + 16], 2)
             self._unfreeze(field)
-
-        # Full zero value doesn't freeze
-        value = None if is_full else speed
-        self._freeze_status(field, value)
-        self._prev_values[field] = value
+        else:
+            self._handle_delta(field, speed)
 
         self._cursor += offset
 
@@ -460,38 +448,38 @@ class TrainingSession(object):
 
         We are not going to parse it for now.
         """
+        field = SampleFields.DISTANCE
         offset = 7
         dist = int(self._next(data, 7), 2)
-        field = 'dist'
 
         if self._is_frozen(field):
             offset = 0
             dist = 0
 
-            if self._next(data, 8) == '10000000':
-                offset = 29
-                dist = int(data[self._cursor + 8 : self._cursor + 29], 2)
-                self._unfreeze(field)
-
-        self._freeze_status(field, dist)
-        self._prev_values[field] = dist
+        is_full = self._next(data, 8) == '10000000'
+        if is_full:
+            offset = 29
+            dist = int(data[self._cursor + 8 : self._cursor + 29], 2)
+            self._unfreeze(field)
+        else:
+            self._handle_delta(field, dist)
 
         self._cursor += offset
 
         return dist
 
     def _parse_coords(self, data):
-        lon = self._parse_coord(data, 'lon')
-        lat = self._parse_coord(data, 'lat')
+        lon = self._parse_coord(data, SampleFields.LON)
+        lat = self._parse_coord(data, SampleFields.LAT)
 
-        return (lat, lon)
+        return (lon, lat)
 
     def _parse_coord(self, data, coord_name):
         offset = 12
         raw_value = self._next(data, offset)
 
         # 12 bits of delta
-        prev = self._last_sample(coord_name)
+        prev = self._prev_sample(coord_name)
         value = self._format_coord_delta(raw_value)
         is_full = False
 
@@ -512,13 +500,15 @@ class TrainingSession(object):
                 value = full_value
                 self._unfreeze(coord_name)
 
-        self._freeze_status(coord_name, int(raw_value, 2))
-        self._prev_values[coord_name] = int(raw_value, 2)
+        if not is_full:
+            self._handle_delta(coord_name, int(raw_value, 2))
 
         self._cursor += offset
 
         return value if is_full else round(prev + value, 9)
 
+    # TODO: Seems like there is a lot of edge cases that may lead to errors.
+    # Figure them out and handle. For now it covers most common patterns.
     def _parse_satellites(self, data):
         """
         Parses 4 (delta) or 7 (full value) bits contain number
@@ -570,11 +560,13 @@ class TrainingSession(object):
         NOTE:
         -- does't trigger unfreeze process
         """
+        field = SampleFields.SATELLITES
         offset = 4
         sat = self._next(data, 4)
         prefixless_value = int(self._next(data, 7), 2)
-        field = 'sat'
 
+        # After a sample with prefixless zero value there
+        # migh be full value with prefix.
         if self._prefixless_zero_sat and sat[:3] == '001':
             offset = 7
 
@@ -589,30 +581,32 @@ class TrainingSession(object):
             if sat[:3] == '001':
                 self._unfreeze(field)
 
+        # Save self._prefixless_zero_sat for next sample, since
+        # there might be full value with prefix even though field
+        # is not frozen.
         self._prefixless_zero_sat = prefixless_value == 0
         if self._prefixless_zero_sat:
             offset = 7
 
-        # Prefixless full zero value shouldn't trigger freezing process
-        value = None if self._prefixless_zero_sat else int(sat, 2)
-        self._freeze_status(field, value)
-        self._prev_values[field] = value
+        is_delta = offset == 4
+        if is_delta:
+            self._handle_delta(field, int(sat, 2))
 
         self._cursor += offset
 
         return sat
 
+    # TODO: Make more reliable algorithm for lap data detection.
     def _has_lap_data(self, data):
-        prev = self._last_sample()
+        prev = self._prev_sample()
         lon = utils.get_bin(int(prev.lon), 8)
         lat = utils.get_bin(int(prev.lat), 8)
 
         # Since the pattern is unknown and we don't have better ideas
         # it's going to be another assumption.
         # If there is lap data, it always contains longitude and latitude.
-        # But the amount of bits before is inconsistent. For now we assume
-        # that there is 250 to 290 bits.
-        # FIXME: Error prone code.
+        # But the amount of bits before is inconsistent. We assume
+        # there is from 250 to 290 bits.
         pat = f'.{{250,290}}{lon}.{{24}}{lat}'
         return re.match(pat, self._next(data, self._LAP_DATA_BITS_LENGTH)) is not None
 
