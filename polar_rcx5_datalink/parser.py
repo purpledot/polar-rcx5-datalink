@@ -244,7 +244,7 @@ class TrainingSession(object):
         """Field is frozen if there was two zero deltas in a row"""
         return self._zero_delta_counter[field] >= 2
 
-    def _unfreeze(self, field):
+    def _reset_zero_delta_counter(self, field):
         self._zero_delta_counter[field] = 0
 
     def _handle_delta(self, field, delta):
@@ -367,11 +367,10 @@ class TrainingSession(object):
         # 1             +0 frozen
         # 011 10010100  148
 
-        if self._is_frozen(field) and val_type == HR_TYPE_FULL_WITH_PREFIX:
-            self._unfreeze(field)
-
         is_full = val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS)
-        if not is_full:
+        if is_full:
+            self._reset_zero_delta_counter(field)
+        else:
             self._handle_delta(field, hr)
 
         self._cursor += offset
@@ -415,7 +414,7 @@ class TrainingSession(object):
         if is_full:
             offset = 16
             speed = int(self._samples_bits[self._cursor + 7 : self._cursor + 16], 2)
-            self._unfreeze(field)
+            self._reset_zero_delta_counter(field)
         else:
             self._handle_delta(field, speed)
 
@@ -457,7 +456,7 @@ class TrainingSession(object):
         if is_full:
             offset = 29
             dist = int(self._samples_bits[self._cursor + 8 : self._cursor + 29], 2)
-            self._unfreeze(field)
+            self._reset_zero_delta_counter(field)
         else:
             self._handle_delta(field, dist)
 
@@ -488,7 +487,7 @@ class TrainingSession(object):
             frac_end = int_end + 20
 
             full_value = self._format_coord(
-                self._samples_bitsself._samples_bits[self._cursor : int_end],
+                self._samples_bits[self._cursor : int_end],
                 self._samples_bits[int_end:frac_end],
             )
 
@@ -496,7 +495,7 @@ class TrainingSession(object):
             if is_full:
                 offset = 28
                 value = full_value
-                self._unfreeze(coord_name)
+                self._reset_zero_delta_counter(coord_name)
 
         if not is_full:
             self._handle_delta(coord_name, int(raw_value, 2))
@@ -577,7 +576,7 @@ class TrainingSession(object):
             # bits that follow satellites bits).
             offset = 0 if prefixless_value > 31 else 7
             if sat[:3] == '001':
-                self._unfreeze(field)
+                self._reset_zero_delta_counter(field)
 
         # Save self._prefixless_zero_sat for next sample, since
         # there might be full value with prefix even though field
@@ -589,6 +588,8 @@ class TrainingSession(object):
         is_delta = offset == 4
         if is_delta:
             self._handle_delta(field, int(sat, 2))
+        elif not self._is_frozen(field):
+            self._reset_zero_delta_counter(field)
 
         self._cursor += offset
 
