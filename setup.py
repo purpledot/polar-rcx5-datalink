@@ -18,6 +18,7 @@ REQUIRED = [
     'click>=7',
     'flask>=1.0.2',
     'geopy>=1.17.0',
+    'loguru>=0.2.5',
     'pytz>=2018.7',
     'pyusb>=1.0.2',
     'requests>=2.20.1',

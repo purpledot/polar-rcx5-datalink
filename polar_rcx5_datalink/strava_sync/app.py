@@ -5,6 +5,7 @@ import functools
 
 import click
 import requests
+import loguru
 from flask import Flask, flash, render_template, session, request, redirect, url_for
 
 from .uploader import upload_activity
@@ -59,7 +60,9 @@ def run_app(host, port, client_id, client_secret, training_sessions):
             try:
                 converter = TCXConverter(training_session, sport)
             except ParsingSamplesError:
-                print_error(f"Error parsing samples of session #{ts_id}")
+                err_msg = f'Error parsing samples of session #{ts_id}'
+                loguru.logger.exception(err_msg)
+                print_error(err_msg)
                 continue
 
             try:

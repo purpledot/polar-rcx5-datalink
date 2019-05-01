@@ -1,9 +1,11 @@
 import sys
 import json
 import os
+import pathlib
 from functools import wraps
 
 import click
+import loguru
 from click import echo, secho
 
 import polar_rcx5_datalink.strava_sync.app as strava_sync
@@ -18,6 +20,21 @@ ENVVAR_PREFIX = 'RCX5'
 DEFAULT_STRAVASYNC_HOST = '127.0.0.1'
 DEFAULT_STRAVASYNC_PORT = 8000
 DEFAULT_EXPORT_FORMAT = 'tcx'
+LOGS_PATH = os.path.join(
+    str(pathlib.Path.home()), 'Documents/rcx5' if os.name == 'nt' else '.rcx5'
+)
+
+log_config = {
+    'handlers': [
+        # {'sink': sys.stdout},
+        {
+            'sink': os.path.join(LOGS_PATH, 'error.log'),
+            'rotation': '100 MB',
+            'retention': '10 days',
+        }
+    ]
+}
+loguru.logger.configure(**log_config)
 
 
 def exit_with_error(message):
@@ -174,7 +191,9 @@ def export(sessions, out, file_format):
         try:
             converter = FORMAT_CONVERTER_MAP[file_format](sess)
         except ParsingSamplesError:
-            print_error(f"Error parsing samples of session #{sess.id}")
+            err_msg = f'Error parsing samples of session #{sess.id}'
+            loguru.logger.exception(err_msg)
+            print_error(err_msg)
             continue
 
         converter.write(out)
