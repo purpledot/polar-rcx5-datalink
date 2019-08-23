@@ -7,8 +7,20 @@ import tzlocal
 from timezonefinder import TimezoneFinder
 
 
-def print_error(message):
-    click.secho(message, bg='red')
+def to_stdout(message):
+    click.echo(message)
+
+
+def to_stderr(message):
+    click.echo(message, err=True)
+
+
+def report_error(message):
+    to_stderr(f"{click.style('ERROR:', fg='red')} {message}")
+
+
+def report_warning(message):
+    click.secho(f"{click.style('WARNING:', fg='yellow')} {message}")
 
 
 @contextmanager

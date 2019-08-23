@@ -14,7 +14,7 @@ from polar_rcx5_datalink.exceptions import (
     StravaActivityUploadError,
     ParsingSamplesError,
 )
-from polar_rcx5_datalink.utils import print_error
+from polar_rcx5_datalink.utils import report_error, report_warning
 
 STRAVA_OAUTH_URL = 'https://www.strava.com/oauth'
 SPORT_PROFILES = ('Other', 'Running', 'Biking')
@@ -60,9 +60,9 @@ def run_app(host, port, client_id, client_secret, training_sessions):
             try:
                 converter = TCXConverter(training_session, sport)
             except ParsingSamplesError:
-                err_msg = f'Error parsing samples of session #{ts_id}'
+                err_msg = f"Can't parse samples of session #{ts_id}"
                 loguru.logger.exception(err_msg)
-                print_error(err_msg)
+                report_warning(err_msg)
                 continue
 
             try:
@@ -74,7 +74,7 @@ def run_app(host, port, client_id, client_secret, training_sessions):
                 # In case if we don't want to interupt the flow because of it.
                 duplicate = 'duplicate' in str(err)
                 if not duplicate:
-                    print_error(f"Can't upload training session {ts_id}. {err}")
+                    report_warning(f"Can't upload training session {ts_id}. {err}")
 
     @app.route('/', methods=['GET', 'POST'])
     def index():
@@ -122,7 +122,7 @@ def run_app(host, port, client_id, client_secret, training_sessions):
             except ValueError:
                 msg = ''
 
-            print_error(f'{err} {msg}')
+            report_error(f'{err} {msg}')
             flash('An error occurred while trying to obtain access token', 'error')
         else:
             session['access_token'] = resp.json()['access_token']

@@ -6,10 +6,10 @@ from functools import wraps
 
 import click
 import loguru
-from click import echo, secho
 
 import polar_rcx5_datalink.strava_sync.app as strava_sync
-from .utils import print_error
+from .__version__ import __version__
+from .converter import FORMAT_CONVERTER_MAP
 from .datalink import DataLink
 from .parser import TrainingSession
 from .converter import FORMAT_CONVERTER_MAP
@@ -59,10 +59,10 @@ def get_raw_sessions(from_dir=None):
     return raw_sessions
 
 
-def raw_sessions_from_dir(dir):
-    for filename in sorted(os.listdir(dir)):
-        with open(os.path.join(dir, filename)) as f:
-            yield json.loads(f.read())
+def raw_sessions_from_dir(path):
+    for filename in sorted(os.listdir(path)):
+        with open(os.path.join(path, filename)) as f:
+            yield json.load(f)
 
 
 def raw_sessions_from_watch():
@@ -208,7 +208,7 @@ def export(sessions, out, file_format):
     '--client-id',
     type=int,
     required=True,
-    help=('Application’s ID, obtained during registration'),
+    help='Application’s ID, obtained during registration',
 )
 @click.option(
     '--client-secret',
