@@ -9,7 +9,8 @@ from .utils import (
     starts_with,
     most_significant_byte,
     least_significant_byte,
-    print_error,
+    report_warning,
+    to_stdout,
 )
 from .exceptions import PolarDataLinkError
 
@@ -34,6 +35,7 @@ class DataLink(object):
 
     _WRITE_TIMEOUT = 1000
     _READ_TIMEOUT = 1000
+    _READ_RETRY_TIMEOUT = 2
 
     _ERROR_TIMEOUT_CODE = 110
 
@@ -41,9 +43,56 @@ class DataLink(object):
         # Hardware ID
         self.hw_id = None
 
-        self.connect()
+    def __enter__(self):
+        return self
 
-    def connect(self):
+    def __exit__(self, exc_type, exc_value, traceback):
+        if self.hw_id is not None:
+            self._disconnect()
+
+    def synchronize(self):
+        self._connect()
+        to_stdout("Select 'Connect > Start synchronizing' from your watch\n")
+
+        watch = self._find_watch()
+        if watch is None:
+            raise PolarDataLinkError('Watch not found')
+
+        paired = self._pair()
+        if not paired:
+            raise PolarDataLinkError('Pairing failed')
+
+    @property
+    def sessions(self):
+        to_stdout('[sync] Loading training sessions')
+
+        session_count = self._count_sessions()
+        if session_count is None:
+            raise PolarDataLinkError('Failed to load training sessions')
+
+        if session_count == 0:
+            raise PolarDataLinkError('No training sessions found')
+
+        session_sizes = []
+        for num in range(session_count):
+            size = self._read_session_size(num)
+            if size is None:
+                raise PolarDataLinkError(f"Can't get a size of session #{num + 1}")
+
+            session_sizes.append(size)
+
+        sessions = []
+        for num, size in enumerate(session_sizes):
+            session = self._read_session(num, size)
+            if session is None:
+                report_warning(f"Can't read session #{num + 1}")
+                continue
+
+            sessions.append(session)
+
+        return sessions
+
+    def _connect(self):
         self.dev = usb.core.find(idVendor=0x0DA4, idProduct=0x0004)
         if self.dev is None:
             raise PolarDataLinkError('Polar DataLink not found')
@@ -62,10 +111,12 @@ class DataLink(object):
         time.sleep(0.001)
         self._write((0x01, 0x40, 0x01, 0x00, 0x51))
 
-    def disconnect(self):
+    def _disconnect(self):
         self._write((0x01, 0x40, 0x04, 0x00, 0x54, *self.hw_id, 0xB7, 0x00, 0x00, 0x01))
 
-    def find_watch(self):
+    def _find_watch(self):
+        to_stdout('[sync] Looking for the watch')
+
         for _ in range(self._FIND_ATTEMPTS):
             data = self._read(timeout_sleep=5)
             is_expected_data = self._is_ready(data) and starts_with(
@@ -79,7 +130,9 @@ class DataLink(object):
 
         return self.hw_id
 
-    def pair(self):
+    def _pair(self):
+        to_stdout('[sync] Pairing with DataLink')
+
         # Send pairing request PAIR_WRITE_ATTEMPTS times
         for _ in range(self._PAIR_WRITE_ATTEMPTS):
             self._write(
@@ -114,56 +167,18 @@ class DataLink(object):
 
         return False
 
-    def sessions_count(self):
+    def _count_sessions(self):
         send_data = (0x01, 0x40, 0x02, 0x00, 0x54, *self.hw_id)
         self._write(send_data)
 
         for _ in range(self._GET_SESSIONS_COUNT_ATTEMPTS):
-            data = self._read_and_resend((0x04, 0x42, 0x3C), send_data)
+            data = self._read_retry((0x04, 0x42, 0x3C), send_data)
             if data is not None:
                 return data[13]
 
         return None
 
-    def sessions(self, sessions_count):
-        sessions_sizes = []
-        for num in range(sessions_count):
-            size = self._session_size(num)
-            if size is None:
-                raise PolarDataLinkError(
-                    f"Can't get a size of session #{num + 1}"
-                )
-
-            sessions_sizes.append(size)
-
-        sessions = []
-        for num, size in enumerate(sessions_sizes):
-            session = self._session(num, size)
-            if session is None:
-                print_error(f"Can't read session #{num + 1}")
-                continue
-
-            sessions.append(session)
-
-        return sessions
-
-    def _read_and_resend(self, expected_data, resend_data, sleep=2):
-        '''Read and resend request if expected data was not received.
-
-        :param sleep: Time to sleep before resend request (seconds).
-        '''
-        data = self._read()
-
-        if self._is_ready(data):
-            if starts_with(data, expected_data):
-                return data
-
-            time.sleep(sleep)
-            self._write(resend_data)
-
-        return None
-
-    def _session_size(self, session_number):
+    def _read_session_size(self, session_number):
         send_data = (
             0x01,
             0x40,
@@ -178,7 +193,7 @@ class DataLink(object):
         self._write(send_data)
 
         for _ in range(self._GET_SESSION_SIZE_ATTEMPTS):
-            data = self._read_and_resend((0x04, 0x42, 0x06), send_data)
+            data = self._read_retry((0x04, 0x42, 0x06), send_data)
             if data is not None:
                 return (data[8] << 8) + data[7]
 
@@ -186,9 +201,9 @@ class DataLink(object):
 
         return None
 
-    def _session(self, number, size):
-        packet_size = self._SESSION_PACKET_WITHOUT_HEADER
+    def _read_session(self, number, size):
         # Session data will come in packets of packet_size size
+        packet_size = self._SESSION_PACKET_WITHOUT_HEADER
         packets_count = math.ceil(size / packet_size)
         tail_size = size % packet_size
 
@@ -198,10 +213,11 @@ class DataLink(object):
             bytes_received = packet * packet_size
             bytes_to_read = tail_size if is_last and tail_size else packet_size
 
-            send_data = self._packet_request_data(number, bytes_received, bytes_to_read)
+            send_data = self._assemble_packet_request_data(
+                number, bytes_received, bytes_to_read
+            )
             self._write(send_data)
 
-            data = None
             for _ in range(self._GET_SESSION_ATTEMPTS):
                 read_data = self._read()
                 if self._is_ready(read_data):
@@ -209,15 +225,16 @@ class DataLink(object):
                     break
 
                 time.sleep(0.01)
-
-            if data is None:
+            else:
                 return None
 
             session.append(list(data))
 
         return session
 
-    def _packet_request_data(self, session_number, bytes_received, bytes_to_read):
+    def _assemble_packet_request_data(
+        self, session_number, bytes_received, bytes_to_read
+    ):
         return (
             0x01,
             0x40,
@@ -237,9 +254,8 @@ class DataLink(object):
         )
 
     def _write(self, data):
-        return self.dev.write(
-            self._ENDPOINT_OUT, self._prepare_data(data), self._WRITE_TIMEOUT
-        )
+        data = bytes(data) + bytes(self._WRITE_DATA_LENGTH - len(data))
+        return self.dev.write(self._ENDPOINT_OUT, data, self._WRITE_TIMEOUT)
 
     def _read(self, timeout_sleep=0.5):
         try:
@@ -253,12 +269,18 @@ class DataLink(object):
         time.sleep(timeout_sleep)
         return array.array('B')
 
-    def _prepare_data(self, data, length=None):
-        if length is None:
-            length = self._WRITE_DATA_LENGTH
+    def _read_retry(self, expected_data, resend_data):
+        """Read and retry a request if expected data was not received."""
+        data = self._read()
+        if self._is_ready(data):
+            if starts_with(data, expected_data):
+                return data
 
-        return bytes(data) + bytes(length - len(data))
+            time.sleep(self._READ_RETRY_TIMEOUT)
+            self._write(resend_data)
 
-    # Checks if data is ready to be processed
+        return None
+
     def _is_ready(self, data):
+        """Checks if data is ready to be processed."""
         return len(data) == self._READ_DATA_LENGTH

@@ -1,7 +1,7 @@
-import sys
 import json
 import os
 import pathlib
+import sys
 from functools import wraps
 
 import click
@@ -11,10 +11,9 @@ import polar_rcx5_datalink.strava_sync.app as strava_sync
 from .__version__ import __version__
 from .converter import FORMAT_CONVERTER_MAP
 from .datalink import DataLink
+from .exceptions import ParsingSamplesError, PolarDataLinkError
 from .parser import TrainingSession
-from .converter import FORMAT_CONVERTER_MAP
-from .exceptions import PolarDataLinkError, ParsingSamplesError
-from .__version__ import __version__
+from .utils import report_error, report_warning, to_stdout
 
 ENVVAR_PREFIX = 'RCX5'
 DEFAULT_STRAVASYNC_HOST = '127.0.0.1'
@@ -37,24 +36,20 @@ log_config = {
 loguru.logger.configure(**log_config)
 
 
-def exit_with_error(message):
-    print_error(message)
-    sys.exit()
-
-
 def get_raw_sessions(from_dir=None):
     """Returns unprocessed training sessions.
 
     Each session is a list of packets and each packet
     is a list of bytes received from the watch.
     """
-    try:
-        if from_dir is not None:
-            raw_sessions = raw_sessions_from_dir(from_dir)
-        else:
+    if from_dir is not None:
+        raw_sessions = raw_sessions_from_dir(from_dir)
+    else:
+        try:
             raw_sessions = raw_sessions_from_watch()
-    except PolarDataLinkError as err:
-        exit_with_error(str(err))
+        except PolarDataLinkError as err:
+            report_error(str(err))
+            sys.exit(1)
 
     return raw_sessions
 
@@ -66,33 +61,9 @@ def raw_sessions_from_dir(path):
 
 
 def raw_sessions_from_watch():
-    dl = DataLink()
-    secho("Select 'Connect > Start' from your watch", fg='cyan')
-
-    echo('Looking for the watch...')
-    watch = dl.find_watch()
-    if watch is None:
-        raise PolarDataLinkError('Watch not found')
-
-    echo('Pairng...')
-    paired = dl.pair()
-    if not paired:
-        raise PolarDataLinkError('Pairing failed')
-
-    echo('Getting overview...')
-    sessions_count = dl.sessions_count()
-    if sessions_count is None:
-        raise PolarDataLinkError('Failed to load training sessions')
-    if sessions_count == 0:
-        secho('No sessions found', fg='green')
-        sys.exit()
-
-    echo('Loading training sessions...')
-    raw_sessions = dl.sessions(sessions_count)
-
-    dl.disconnect()
-
-    return raw_sessions
+    with DataLink() as dl:
+        dl.synchronize()
+        return dl.sessions
 
 
 def parse_raw_sessions(raw_sessions, from_date=None, to_date=None):
@@ -182,23 +153,21 @@ def common_options(func):
 @load_sessions
 def export(sessions, out, file_format):
     """Exports training sessions."""
-    echo('Exporting training sessions...')
+    to_stdout('[export] Exporting training sessions')
     for sess in sessions:
         if file_format == 'tcx' and not sess.has_gps:
-            echo(f'{sess.name} has no GPS data')
+            report_warning(f'{sess.name} has no GPS data')
             continue
 
         try:
             converter = FORMAT_CONVERTER_MAP[file_format](sess)
         except ParsingSamplesError:
-            err_msg = f'Error parsing samples of session #{sess.id}'
+            err_msg = f"Can't parse samples of session #{sess.id}"
             loguru.logger.exception(err_msg)
-            print_error(err_msg)
+            report_warning(err_msg)
             continue
 
         converter.write(out)
-
-    secho('Done', fg='green')
 
 
 @cli.command(name='stravasync')
