@@ -1,6 +1,3 @@
-import os
-from contextlib import contextmanager
-
 import click
 import pytz
 import tzlocal
@@ -21,18 +18,6 @@ def report_error(message):
 
 def report_warning(message):
     click.secho(f"{click.style('WARNING:', fg='yellow')} {message}")
-
-
-@contextmanager
-def ignored(*exceptions):
-    try:
-        yield
-    except exceptions:
-        pass
-
-
-def file_dir(file):
-    return os.path.abspath(os.path.dirname(file))
 
 
 def get_bin(val, length=16):

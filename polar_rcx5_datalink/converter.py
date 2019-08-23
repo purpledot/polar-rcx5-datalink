@@ -38,7 +38,7 @@ class TCXConverter(Converter):
     _ISO8601_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
 
     def __init__(self, training_session, sport='Other'):
-        Converter.__init__(self, training_session)
+        super().__init__(training_session)
         self.sport = sport
         self.training_session.parse_samples()
         self._convert()
