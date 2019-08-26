@@ -12,7 +12,7 @@ from .utils import (
     report_warning,
     to_stdout,
 )
-from .exceptions import PolarDataLinkError
+from .exceptions import SyncError
 
 
 class DataLink(object):
@@ -56,11 +56,11 @@ class DataLink(object):
 
         watch = self._find_watch()
         if watch is None:
-            raise PolarDataLinkError('Watch not found')
+            raise SyncError('Watch not found')
 
         paired = self._pair()
         if not paired:
-            raise PolarDataLinkError('Pairing failed')
+            raise SyncError('Pairing failed')
 
     @property
     def sessions(self):
@@ -68,16 +68,16 @@ class DataLink(object):
 
         session_count = self._count_sessions()
         if session_count is None:
-            raise PolarDataLinkError('Failed to load training sessions')
+            raise SyncError('Failed to load training sessions')
 
         if session_count == 0:
-            raise PolarDataLinkError('No training sessions found')
+            raise SyncError('No training sessions found')
 
         session_sizes = []
         for num in range(session_count):
             size = self._read_session_size(num)
             if size is None:
-                raise PolarDataLinkError(f"Can't get a size of session #{num + 1}")
+                raise SyncError(f"Can't get a size of session #{num + 1}")
 
             session_sizes.append(size)
 
@@ -95,7 +95,7 @@ class DataLink(object):
     def _connect(self):
         self.dev = usb.core.find(idVendor=0x0DA4, idProduct=0x0004)
         if self.dev is None:
-            raise PolarDataLinkError('Polar DataLink not found')
+            raise SyncError('Polar DataLink not found')
 
         try:
             # is_kernel_driver_active raises NotImplementedError on Windows

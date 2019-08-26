@@ -11,7 +11,7 @@ import polar_rcx5_datalink.strava_sync.app as strava_sync
 from .__version__ import __version__
 from .converter import FORMAT_CONVERTER_MAP
 from .datalink import DataLink
-from .exceptions import ParsingSamplesError, PolarDataLinkError
+from .exceptions import ParserError, SyncError
 from .parser import TrainingSession
 from .utils import report_error, report_warning, to_stdout
 
@@ -47,7 +47,7 @@ def get_raw_sessions(from_dir=None):
     else:
         try:
             raw_sessions = raw_sessions_from_watch()
-        except PolarDataLinkError as err:
+        except SyncError as err:
             report_error(str(err))
             sys.exit(1)
 
@@ -161,7 +161,7 @@ def export(sessions, out, file_format):
 
         try:
             converter = FORMAT_CONVERTER_MAP[file_format](sess)
-        except ParsingSamplesError:
+        except ParserError:
             err_msg = f"Can't parse samples of session #{sess.id}"
             loguru.logger.exception(err_msg)
             report_warning(err_msg)

@@ -148,7 +148,7 @@ class TrainingSession(object):
 
                 self.samples.append(Sample(hr, lon, lat, distance, speed))
         except Exception as e:
-            raise ParsingSamplesError(e)
+            raise ParserError(e)
 
     def _next_bits(self, length):
         return self._samples_bits[self._cursor : self._cursor + length]

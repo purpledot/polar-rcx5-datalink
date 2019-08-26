@@ -10,10 +10,7 @@ from flask import Flask, flash, render_template, session, request, redirect, url
 
 from .uploader import upload_activity
 from polar_rcx5_datalink.converter import TCXConverter
-from polar_rcx5_datalink.exceptions import (
-    StravaActivityUploadError,
-    ParsingSamplesError,
-)
+from polar_rcx5_datalink.exceptions import StravaActivityUploadError, ParserError
 from polar_rcx5_datalink.utils import report_error, report_warning
 
 STRAVA_OAUTH_URL = 'https://www.strava.com/oauth'
@@ -59,7 +56,7 @@ def run_app(host, port, client_id, client_secret, training_sessions):
 
             try:
                 converter = TCXConverter(training_session, sport)
-            except ParsingSamplesError:
+            except ParserError:
                 err_msg = f"Can't parse samples of session #{ts_id}"
                 loguru.logger.exception(err_msg)
                 report_warning(err_msg)
