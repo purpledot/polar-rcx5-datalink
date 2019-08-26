@@ -1,13 +1,13 @@
-import re
 import datetime
+import re
 from collections import namedtuple
 from enum import Enum
 
 import geopy.distance
 
 import polar_rcx5_datalink.utils as utils
+from .exceptions import ParserError
 from .utils import bcd_to_int
-from .exceptions import ParsingSamplesError
 
 
 class SampleFields(Enum):
@@ -19,58 +19,31 @@ class SampleFields(Enum):
     SATELLITES = 'sat'
 
 
-FIELDS = [field.value for field in SampleFields if field != SampleFields.SATELLITES]
-Sample = namedtuple('Sample', FIELDS, defaults=(None,) * len(FIELDS))
+class HRType(Enum):
+    """Binds type to a byte sequence.
 
-MAP_SAMPLE_RATE_TO_SEC = (
-    # 0=1sec
-    1,
-    # 1=2sec
-    2,
-    # 2=5sec
-    5,
-    # 3=15sec
-    15,
-    # 4=60sec
-    60,
-)
+    There is 4 types of HR values defined by a prefix:
+    011 -- 8-bit unsigned integer (positive full value)
+    10  -- 4-bit unsigned integer (positive delta)
+    11  -- 4-bit signed integer (negative delta)
+    00  -- 11-bit unsigned integer (positive full value)
+    """
 
-# There is 4 types of HR values defined by a prefix:
-# 011 -- 8-bit unsigned integer (positive full value)
-# 10  -- 4-bit unsigned integer (positive delta)
-# 11  -- 4-bit signed integer (negative delta)
-# 00  -- 11-bit unsigned integer (positive full value)
-HR_TYPE_FULL_WITH_PREFIX = '01'
-HR_TYPE_FULL_PREFIXLESS = '00'
-HR_TYPE_POS_DELTA = '10'
-HR_TYPE_NEG_DELTA = '11'
+    FULL_WITH_PREFIX = '01'
+    FULL_PREFIXLESS = '00'
+    POS_DELTA = '10'
+    NEG_DELTA = '11'
+
+
+node_fields = [f.value for f in SampleFields if f != SampleFields.SATELLITES]
+Sample = namedtuple('Sample', node_fields, defaults=(None,) * len(node_fields))
 
 
 class TrainingSession(object):
-    COORD_COEFF = 1666.666_666_666_666_7
+    # We need this coefficient to decode values of coordinates
+    COORD_COEFF = 10 ** 4 / 6
     _PACKET_HEADER_LENGTH = 7
     _LAP_DATA_BITS_LENGTH = 416
-    _MAP_FIELD_TO_BYTE_INDEX = {
-        'user_hr_max': 219,
-        'user_hr_rest': 54,
-        'user_hr_min': 50,
-        'year': (44, lambda x: x + 1920),
-        'month': 43,
-        'day': 42,
-        'hour': (41, bcd_to_int),
-        'minute': (40, bcd_to_int),
-        'second': (39, bcd_to_int),
-        'duration_hours': (38, bcd_to_int),
-        'duration_minutes': (37, bcd_to_int),
-        'duration_seconds': (36, bcd_to_int),
-        'duration_tenth': (35, bcd_to_int),
-        'hr_max': 205,
-        'hr_min': 203,
-        'hr_avg': 201,
-        'has_hr': (165, bool),
-        'has_gps': (166, bool),
-        'sample_rate': (167, lambda x: MAP_SAMPLE_RATE_TO_SEC[x]),
-    }
 
     def __init__(self, raw_session):
         self.raw = raw_session
@@ -88,7 +61,7 @@ class TrainingSession(object):
         self.duration = self._calculate_duration()
         # Meters
         self.distance = 0
-        # Meteres per second
+        # Meters per second
         self.max_speed = 0
         self.samples = []
 
@@ -121,11 +94,11 @@ class TrainingSession(object):
 
         return ''.join(result)
 
-    # TODO: Make it less error prone.
+    # TODO: Make it less error-prone.
     # This code is prone to critical errors since changing
     # settings in the watch (e.g. enabling automatic lap) might affect it.
     def parse_samples(self):
-        """Parses periodic data recorded with fixed interval"""
+        """Parses periodic data recorded with fixed interval."""
         try:
             self.samples = [self._parse_first_sample()]
 
@@ -183,8 +156,34 @@ class TrainingSession(object):
     def _parse_info(self):
         first_packet = self.raw[0]
 
+        # Dict that maps TrainingSession's attribute to its value in raw session.
+        # Formatting function applied if needed.
+        field_to_value_map = {
+            'user_hr_max': 219,
+            'user_hr_rest': 54,
+            'user_hr_min': 50,
+            'year': (44, lambda x: x + 1920),
+            'month': 43,
+            'day': 42,
+            'hour': (41, bcd_to_int),
+            'minute': (40, bcd_to_int),
+            'second': (39, bcd_to_int),
+            'duration_hours': (38, bcd_to_int),
+            'duration_minutes': (37, bcd_to_int),
+            'duration_seconds': (36, bcd_to_int),
+            'duration_tenth': (35, bcd_to_int),
+            'hr_max': 205,
+            'hr_min': 203,
+            'hr_avg': 201,
+            'has_hr': (165, bool),
+            'has_gps': (166, bool),
+            # 0 (byte value) => 1 (sample rate in seconds)
+            # 1 => 2, 2 => 5, 3 => 15, 4 => 60
+            'sample_rate': (167, lambda x: (1, 2, 5, 15, 60)[x]),
+        }
+
         info = {}
-        for field, value in self._MAP_FIELD_TO_BYTE_INDEX.items():
+        for field, value in field_to_value_map.items():
             if isinstance(value, int):
                 data = first_packet[value]
             else:
@@ -213,27 +212,25 @@ class TrainingSession(object):
         )
 
     def _process_hr_bits(self, input_val):
-        val_type = input_val[0:2]
+        val_type = HRType(input_val[0:2])
 
-        if self._is_frozen(SampleFields.HR) and val_type != HR_TYPE_FULL_WITH_PREFIX:
+        if self._is_frozen(SampleFields.HR) and val_type != HRType.FULL_WITH_PREFIX:
             return 0, None, 1
 
         type_offset_map = {
-            HR_TYPE_FULL_WITH_PREFIX: 3,
-            HR_TYPE_FULL_PREFIXLESS: 0,
-            HR_TYPE_POS_DELTA: 2,
-            HR_TYPE_NEG_DELTA: 2,
+            HRType.FULL_WITH_PREFIX: 3,
+            HRType.FULL_PREFIXLESS: 0,
+            HRType.POS_DELTA: 2,
+            HRType.NEG_DELTA: 2,
         }
         type_offset = type_offset_map[val_type]
-        end = (
-            11 if val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS) else 6
-        )
+        end = 11 if val_type in (HRType.FULL_WITH_PREFIX, HRType.FULL_PREFIXLESS) else 6
         val = input_val[type_offset:end]
 
         if len(val) < 4:
             val = '{:<04s}'.format(val)
 
-        if val_type == HR_TYPE_NEG_DELTA:
+        if val_type == HRType.NEG_DELTA:
             val = utils.twos_complement_to_int(val)
         else:
             val = int(val, 2)
@@ -241,14 +238,18 @@ class TrainingSession(object):
         return val, val_type, end
 
     def _is_frozen(self, field):
-        """Field is frozen if there was two zero deltas in a row"""
+        """
+        Field is frozen if there was two zero deltas in a row.
+        Frozen fields won't be parsed. Their value is assumed be
+        the same until unfrozen.
+        """
         return self._zero_delta_counter[field] >= 2
 
     def _reset_zero_delta_counter(self, field):
         self._zero_delta_counter[field] = 0
 
     def _handle_delta(self, field, delta):
-        """Counts zero deltas if they occur one by one"""
+        """Counts zero deltas if they occur one by one."""
         if delta == 0:
             self._zero_delta_counter[field] += 1
         else:
@@ -273,8 +274,7 @@ class TrainingSession(object):
         return geopy.distance.distance(coord1, coord2).meters
 
     def _parse_first_coords(self, data):
-        """
-        Returns initial coordinates.
+        """Returns initial coordinates.
 
         lon_int  lon_frac             lat_int  lat_frac
         00100111 01100111110010011111 00110110 01011010011111011110
@@ -326,8 +326,8 @@ class TrainingSession(object):
         # Fractional part is calculated with unknown formula.
         # I figured out that if we do int('0101', 2) / k, where k = 10/6,
         # we will get approximate value for fractional part.
-
-        # We won't parse speed data for now, maybe in future versions.
+        #
+        # We won't parse speed data.
         # Just skip those bits plus 29 bits next to them for distance covered.
         self._cursor += 45
 
@@ -342,10 +342,8 @@ class TrainingSession(object):
         self._cursor = coords_end
 
         # Next 7 bits contain number of satellites used
-        #
         # Example: 001 (prefix) 0100 (value)
-        #
-        # Skip it for now.
+        # We won't use it.
         self._cursor += 7
         # The purpose of next 23 bits is unknown
         self._cursor += 23
@@ -367,7 +365,7 @@ class TrainingSession(object):
         # 1             +0 frozen
         # 011 10010100  148
 
-        is_full = val_type in (HR_TYPE_FULL_WITH_PREFIX, HR_TYPE_FULL_PREFIXLESS)
+        is_full = val_type in (HRType.FULL_WITH_PREFIX, HRType.FULL_PREFIXLESS)
         if is_full:
             self._reset_zero_delta_counter(field)
         else:
@@ -378,8 +376,7 @@ class TrainingSession(object):
         return hr if is_full else self._prev_sample(field) + hr
 
     def _parse_speed(self):
-        """
-        Parse 7 (delta) or 16 (full value) bits that contain speed.
+        """Parse 7 (delta) or 16 (full value) bits that contain speed.
 
         We are going to use int(x, 2) / k formula for
         examples below.
@@ -396,9 +393,7 @@ class TrainingSession(object):
             0001110 (no speed data, just distance's 7 bits)
             10000000 1010 0010 0001111
 
-        Look comments above to understand how to handle full value.
-
-        NOTE: full value might appear even without speed being frozen.
+        Full value might appear even without speed being frozen.
         """
 
         # We are not going to use speed so we don't care about its value.
@@ -423,13 +418,12 @@ class TrainingSession(object):
         return speed
 
     def _parse_distance(self):
-        """
-        Parses 7 or 29 bits that contain distance covered.
+        """Parses 7 or 29 bits that contain distance covered.
 
         7 bits contain amount of distance units covered
         over a sample of time since previous interval.
 
-        29  bits contain distance covered since the
+        29 bits contain distance covered since the
         session start.
 
         Distance is going to "freeze" with two zeroes in a row.
@@ -439,10 +433,8 @@ class TrainingSession(object):
             0000010                           2
             0000000                           0
             0000000                           0
-                                                0
+                                              0
             10000000 000000000010010101011 1195
-
-        We are not going to parse it for now.
         """
         field = SampleFields.DISTANCE
         offset = 7
@@ -505,7 +497,7 @@ class TrainingSession(object):
         return value if is_full else round(prev + value, 9)
 
     # TODO: Seems like there is a lot of edge cases that may lead to errors.
-    # Figure them out and handle. For now it covers most common patterns.
+    # Figure them out and handle. For now it covers most common cases.
     def _parse_satellites(self):
         """
         Parses 4 (delta) or 7 (full value) bits contain number
@@ -516,46 +508,44 @@ class TrainingSession(object):
 
             0000 0101111110 (purpose of these 10 bits is unknown)
             0000 0110111111
-            0101111111
+            0101111111 (value is frozen, only undefined 10 bits are left)
             0101111111
 
         And there is a prefix (001) to exit out of this state:
 
-            0000 0101111111       +0
-            0000 0101111111       +0
+            0000 0101111111       +0 delta
+            0000 0101111111       +0 delta
             0101111111            +0 frozen
             0101111111            +0 frozen
             001 0111 0101111111    7 full value with prefix
-            0001 0101111111       +1
+            0001 0101111111       +1 delta
 
-        Prefix is a flag that says that there is a full
-        value (not delta) 4 bits next to it.
+        Prefix is a flag that says there is a full value (not delta) 4 bits next to it.
 
-        There also might be a prefixless full zero value that appears
+        There is also might be a prefixless full zero value that appears
         due to unknown circumstances.
 
             0000000 0101101111
 
-        NOTE:
-        -- doesn't trigger freezing process
-        -- next value might be prefixed full value
+        Prefixless full zero value:
+        - doesn't trigger freezing process
+        - next value might be prefixed full value
             0000000 0101101111
             001 0011 0101101111
-        -- next value might be delta zero value
+        - next value might be delta zero value
             0000000 0101111110
             0000 0101111111
 
         In frozen state there might be prefixless full value that appears
         due to unknown circumstances.
 
-            0000 0101111111     +0
-            0000 0101111111     +0
+            0000 0101111111     +0 delta
+            0000 0101111111     +0 delta
             0101101111          +0 frozen
             0000101 0101100000   5 full prefixless value
             001 0101 0100111111  5 full value with prefix
 
-        NOTE:
-        -- does't trigger unfreeze process
+        Prefixless full value does't trigger unfreeze process.
         """
         field = SampleFields.SATELLITES
         offset = 4
@@ -610,8 +600,10 @@ class TrainingSession(object):
         return re.match(pat, self._next_bits(self._LAP_DATA_BITS_LENGTH)) is not None
 
     def _get_samples_bits(self):
-        """Returns periodic data as bits"""
-        # periodic data starts at the 349th byte (has gps)
-        # or at 351th (without gps)
+        """Returns bits with session's samples.
+
+        Session's samples start at the 349th byte (if session has gps data)
+        or at 351th (without gps data).
+        """
         start = 349 if self.has_gps else 351
         return self.tobin()[start * 8 :]
