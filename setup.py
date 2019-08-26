@@ -26,6 +26,8 @@ REQUIRED = [
     'tzlocal>=1.5.1',
 ]
 
+EXTRAS = {'dev': ['pytest']}
+
 here = os.path.abspath(os.path.dirname(__file__))
 
 try:
@@ -52,6 +54,7 @@ setup(
     python_requires=REQUIRES_PYTHON,
     url=URL,
     install_requires=REQUIRED,
+    extras_require=EXTRAS,
     include_package_data=True,
     license='Unlicense',
     packages=find_packages(),
