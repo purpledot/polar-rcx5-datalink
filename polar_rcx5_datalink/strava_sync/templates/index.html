@@ -4,12 +4,12 @@
   <form method="POST">
     <p><a href="https://www.strava.com/dashboard">Go to Strava</a></p>
 
-    {% with messages = get_flashed_messages(with_categories=True) %} 
+    {% with messages = get_flashed_messages(with_categories=True) %}
       {% if messages %}
         {% for category, msg in messages %}
           <p class="{{ 'alert-error' if category == 'error' else 'alert-success' }}">{{ msg }}</p>
         {% endfor %}
-      {% endif %} 
+      {% endif %}
     {% endwith %}
 
     <div>

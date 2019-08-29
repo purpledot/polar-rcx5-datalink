@@ -59,7 +59,7 @@ How to install libusb on Windows: https://github.com/pyusb/pyusb/issues/120#issu
       Exports training sessions.
 
     Options:
-      -o, --out PATH                  Where to save the output. Current working 
+      -o, --out PATH                  Where to save the output. Current working
                                       directory by default.
       -f, --format [raw|bin|tcx]      Export file format. [default: tcx]
       -s, --sessions-dir PATH         Directory of raw training sessions.
